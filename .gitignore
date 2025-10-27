@@ -43,3 +43,31 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+
+# Flutter/Dart
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+
+# Builds/temporários
+build/
+ios/Flutter/Flutter.podspec
+pubspec.lock
+
+# Android/Gradle cache
+.gradle/
+**/GeneratedPluginRegistrant.java
+**/GeneratedPluginRegistrant.swift
+
+# IDEs
+.vscode/
+.idea/
+
+# Banco de dados local (NÃO subir)
+*.db
+
+# MacOS/Linux
+.DS_Store
