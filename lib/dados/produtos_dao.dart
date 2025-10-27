@@ -219,4 +219,37 @@ class ProdutosDAO {
       ON produtos(LOWER(nome))
     ''');
   }
+
+
+  /// Atualiza o nome do produto garantindo que não haja duplicado.
+  /// Retorna true se o nome foi alterado com sucesso.
+  Future<bool> atualizarNome({required int id, required String novoNome}) async {
+    final db = await _db;
+    final nome = novoNome.trim();
+    if (nome.isEmpty) return false;
+
+    // verifica se já existe outro produto com o mesmo nome (ignorando maiúsculas)
+    final existe = await db.query(
+      'produtos',
+      columns: ['id'],
+      where: 'LOWER(nome) = ? AND id <> ?',
+      whereArgs: [nome.toLowerCase(), id],
+      limit: 1,
+    );
+
+    if (existe.isNotEmpty) {
+      // impede duplicado
+      throw StateError('duplicado');
+    }
+
+    final linhas = await db.update(
+      'produtos',
+      {'nome': nome},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+
+    return linhas > 0;
+  }
+
 }

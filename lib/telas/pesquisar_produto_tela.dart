@@ -20,6 +20,11 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
   bool selecionando = false;
   final Set<int> selecionados = <int>{};
 
+  // retorna o id quando há exatamente 1 item selecionado; senão, null
+  int? get _idSelecionadoUnico =>
+    selecionados.length == 1 ? selecionados.first : null;
+
+
   Future<void> buscar() async {
     final termo = campoBusca.text.trim();
 
@@ -116,6 +121,78 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
     });
   }
 
+  Future<void> _editarSelecionado() async {
+  // pega o id do único item selecionado
+  if (selecionados.length != 1) return;
+  final id = selecionados.first;
+
+  // busca o nome atual para preencher no campo de texto
+  final atual = await dao.buscarPorId(id);
+  final nomeAtual = (atual?['nome'] ?? '').toString();
+
+  final ctrl = TextEditingController(text: nomeAtual);
+
+  // abre o diálogo para digitar o novo nome
+  final novoNome = await showDialog<String>(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: const Text('Renomear produto'),
+      content: TextField(
+        controller: ctrl,
+        autofocus: true,
+        decoration: const InputDecoration(
+          labelText: 'Novo nome',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, null),
+          child: const Text('Cancelar'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+          child: const Text('Salvar'),
+        ),
+      ],
+    ),
+  );
+
+  if (novoNome == null || novoNome.isEmpty || novoNome == nomeAtual) return;
+
+  try {
+    final ok = await dao.atualizarNome(id: id, novoNome: novoNome);
+    if (!mounted) return;
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('✅ Renomeado para "$novoNome"')),
+      );
+      _limparSelecao();
+      await buscar();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nada alterado.')),
+      );
+    }
+  } on StateError catch (e) {
+    if (e.message == 'duplicado') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Já existe um produto com esse nome.')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Erro ao renomear produto.')),
+      );
+    }
+  } catch (e, st) {
+    debugPrint('❌ Erro ao renomear: $e\n$st');
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Erro inesperado ao renomear')),
+    );
+  }
+}
+
   Future<void> _excluirSelecionados() async {
     if (selecionados.isEmpty) return;
     final qtd = selecionados.length;
@@ -174,6 +251,12 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
       ),
       title: Text('$total selecionado(s)'),
       actions: [
+        if (_idSelecionadoUnico != null)
+        IconButton(
+          tooltip: 'Renomear',
+          icon: const Icon(Icons.edit),
+          onPressed: _editarSelecionado,
+        ),
         IconButton(
           tooltip: tudoSelecionado ? 'Limpar seleção' : 'Selecionar tudo',
           icon: Icon(tudoSelecionado ? Icons.select_all : Icons.done_all),
@@ -185,6 +268,7 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
             }
           },
         ),
+
         IconButton(
           tooltip: 'Excluir selecionados',
           icon: const Icon(Icons.delete),
