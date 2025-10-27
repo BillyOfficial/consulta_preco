@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import 'banco_dados.dart';
 
 class RegistrosDAO {
@@ -17,7 +19,7 @@ class RegistrosDAO {
       'loja': loja,
       'cidade': cidade,
     });
-    print('💾 Registro inserido com id: $id (produto $produtoId)');
+    debugPrint('💾 Registro inserido com id: $id (produto $produtoId)');
     return id;
   }
 
@@ -30,7 +32,7 @@ class RegistrosDAO {
       whereArgs: [produtoId],
       orderBy: 'data DESC',
     );
-    print('📜 Encontrados ${res.length} registros para produto $produtoId');
+    debugPrint('📜 Encontrados ${res.length} registros para produto $produtoId');
     return res;
   }
 
@@ -47,7 +49,7 @@ class RegistrosDAO {
       orderBy: 'data DESC',
       limit: limite,
     );
-    print('📊 Últimos ${res.length} registros do produto $produtoId');
+    debugPrint('📊 Últimos ${res.length} registros do produto $produtoId');
     return res;
   }
 
@@ -75,7 +77,7 @@ class RegistrosDAO {
       'cidade': cidade,
     });
 
-    print(
+    debugPrint(
       '🏪 Preço $valor salvo para produto $produtoId (loja: ${loja ?? "?"}, cidade: ${cidade ?? "?"})',
     );
   }

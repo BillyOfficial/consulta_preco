@@ -1,6 +1,6 @@
+import 'package:consulta_preco/telas/produto_detalhe_tela.dart';
 import 'package:flutter/material.dart';
 import '../dados/produtos_dao.dart';
-import 'produto_detalhe_tela.dart';
 
 class PesquisarProdutoTela extends StatefulWidget {
   const PesquisarProdutoTela({super.key});
@@ -12,34 +12,186 @@ class PesquisarProdutoTela extends StatefulWidget {
 class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
   final campoBusca = TextEditingController();
   final dao = ProdutosDAO();
+
   bool carregando = false;
   List<Map<String, dynamic>> resultados = [];
 
+  // ---- multi-seleção ----
+  bool selecionando = false;
+  final Set<int> selecionados = <int>{};
+
   Future<void> buscar() async {
     final termo = campoBusca.text.trim();
+
     if (termo.isEmpty) {
-      setState(() => resultados = []);
+      if (!mounted) return;
+      setState(() {
+        resultados = [];
+        carregando = false;
+        _limparSelecao();
+      });
       return;
     }
+
+    if (!mounted) return;
     setState(() => carregando = true);
-    resultados = await dao.buscarPorNome(termo);
-    setState(() => carregando = false);
+
+    try {
+      final dados = await dao.buscarPorNome(termo);
+      debugPrint('🔎 BuscarPorNome("$termo") retornou ${dados.length} resultados');
+
+      if (!mounted) return;
+      setState(() {
+        resultados = dados;
+        carregando = false;
+
+        // Se estamos selecionando, mantenha só IDs que ainda existem na lista
+        final visiveis = dados.map<int>((m) => m['id'] as int).toSet();
+        selecionados.removeWhere((id) => !visiveis.contains(id));
+        if (selecionados.isEmpty) selecionando = false;
+      });
+    } catch (e, st) {
+      debugPrint('❌ Erro ao buscar: $e\n$st');
+      if (!mounted) return;
+      setState(() => carregando = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Erro ao buscar produtos')),
+      );
+    }
   }
 
   Future<void> criarProdutoRapido() async {
     final nome = campoBusca.text.trim();
     if (nome.isEmpty) return;
-    final id = await dao.inserir(nome: nome);
-    if (id > 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Produto criado!')),
-      );
+
+    try {
+      final id = await dao.inserir(nome: nome);
+      debugPrint('💾 Produto salvo com id: $id');
+
+      if (!mounted) return;
       await buscar();
-    } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Já existe produto com esse nome/EAN.')),
+        SnackBar(content: Text('Produto "$nome" criado')),
+      );
+    } catch (e, st) {
+      debugPrint('❌ Erro ao criar produto: $e\n$st');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Erro ao criar produto')),
       );
     }
+  }
+
+  // ---- helpers de seleção ----
+  void _limparSelecao() {
+    selecionando = false;
+    selecionados.clear();
+  }
+
+  void _entrarSelecaoCom(int id) {
+    setState(() {
+      selecionando = true;
+      selecionados
+        ..clear()
+        ..add(id);
+    });
+  }
+
+  void _alternarSelecao(int id) {
+    setState(() {
+      if (selecionados.remove(id)) {
+        if (selecionados.isEmpty) selecionando = false;
+      } else {
+        selecionados.add(id);
+      }
+    });
+  }
+
+  void _selecionarTudo() {
+    setState(() {
+      selecionando = true;
+      selecionados
+        ..clear()
+        ..addAll(resultados.map<int>((m) => m['id'] as int));
+    });
+  }
+
+  Future<void> _excluirSelecionados() async {
+    if (selecionados.isEmpty) return;
+    final qtd = selecionados.length;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Excluir selecionados'),
+        content: Text('Confirmar exclusão de $qtd produto(s)? '
+            'Os históricos também serão apagados.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Excluir')),
+        ],
+      ),
+    ) ?? false;
+
+    if (!ok) return;
+
+    try {
+      // Versão compatível sem excluirVarios(): apaga um a um
+      int removidos = 0;
+      for (final id in selecionados) {
+        removidos += await dao.excluir(id);
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('🗑️ Excluídos: $removidos')),
+      );
+      _limparSelecao();
+      await buscar();
+    } catch (e, st) {
+      debugPrint('❌ Erro ao excluir: $e\n$st');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Erro ao excluir')),
+      );
+    }
+  }
+
+  PreferredSizeWidget _buildAppBar() {
+    if (!selecionando) {
+      return AppBar(title: const Text('Pesquisar por Produto'));
+    }
+
+    final total = selecionados.length;
+    final tudoSelecionado = resultados.isNotEmpty &&
+        selecionados.length == resultados.length;
+
+    return AppBar(
+      leading: IconButton(
+        tooltip: 'Sair da seleção',
+        icon: const Icon(Icons.close),
+        onPressed: () => setState(_limparSelecao),
+      ),
+      title: Text('$total selecionado(s)'),
+      actions: [
+        IconButton(
+          tooltip: tudoSelecionado ? 'Limpar seleção' : 'Selecionar tudo',
+          icon: Icon(tudoSelecionado ? Icons.select_all : Icons.done_all),
+          onPressed: () {
+            if (tudoSelecionado) {
+              setState(_limparSelecao);
+            } else {
+              _selecionarTudo();
+            }
+          },
+        ),
+        IconButton(
+          tooltip: 'Excluir selecionados',
+          icon: const Icon(Icons.delete),
+          onPressed: _excluirSelecionados,
+        ),
+      ],
+    );
   }
 
   @override
@@ -48,69 +200,114 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
     super.dispose();
   }
 
-@override
-Widget build(BuildContext context) {
-  return Scaffold(
-    appBar: AppBar(title: const Text('Pesquisar por Produto')),
-    // ✅ deixa o Scaffold ajustar a altura quando o teclado aparece
-    resizeToAvoidBottomInset: true,
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: _buildAppBar(),
+      resizeToAvoidBottomInset: true,
 
-    body: SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: campoBusca,
-                    textInputAction: TextInputAction.search,
-                    onSubmitted: (_) => buscar(),
-                    decoration: const InputDecoration(
-                      labelText: 'Nome do produto',
-                      border: OutlineInputBorder(),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: campoBusca,
+                      textInputAction: TextInputAction.search,
+                      onSubmitted: (_) => buscar(),
+                      decoration: const InputDecoration(
+                        labelText: 'Nome do produto',
+                        border: OutlineInputBorder(),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(onPressed: buscar, child: const Text('Buscar')),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (carregando) const LinearProgressIndicator(),
-            Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.only(bottom: 8),
-                itemCount: resultados.length,
-                itemBuilder: (_, i) {
-                  return null;
-                 /* ...igual ao seu... */ },
+                  const SizedBox(width: 8),
+                  ElevatedButton(onPressed: buscar, child: const Text('Buscar')),
+                ],
               ),
-            ),
-          ],
-        ),
-      ),
-    ),
+              const SizedBox(height: 8),
+              if (carregando) const LinearProgressIndicator(),
 
-    // ✅ o rodapé “sobe” junto com o teclado
-    bottomNavigationBar: AnimatedPadding(
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOut,
-      padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
-        top: 8,
-        // altura do teclado; 0 quando fechado
-        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-      ),
-      child: SafeArea(
-        child: TextButton(
-          onPressed: criarProdutoRapido,
-          child: const Text('Não achei. Criar produto com esse nome'),
+              Expanded(
+                child: resultados.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'Nenhum produto encontrado',
+                          style: TextStyle(color: Colors.black54),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        itemCount: resultados.length,
+                        itemBuilder: (_, i) {
+                          final item = resultados[i];
+                          final id = item['id'] as int;
+                          final nome = (item['nome'] ?? '').toString();
+                          final ean = item['ean']?.toString();
+                          final marcado = selecionados.contains(id);
+
+                          return Card(
+                            child: ListTile(
+                              // CheckBox à esquerda quando em modo seleção
+                              leading: selecionando
+                                  ? Checkbox(
+                                      value: marcado,
+                                      onChanged: (_) => _alternarSelecao(id),
+                                    )
+                                  : null,
+
+                              title: Text(nome.isEmpty ? 'Sem nome' : nome),
+                              subtitle: Text(
+                                (ean == null || ean.isEmpty) ? 'Sem EAN' : 'EAN: $ean',
+                              ),
+                              trailing: selecionando ? null : const Icon(Icons.chevron_right),
+
+                              // Tap alterna seleção quando selecionando; senão navega
+                              onTap: () {
+                                if (selecionando) {
+                                  _alternarSelecao(id);
+                                } else {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => ProdutoDetalheTela(produtoId: id),
+                                    ),
+                                  );
+                                }
+                              },
+
+                              // Long press entra no modo seleção marcando este item
+                              onLongPress: () => _entrarSelecaoCom(id),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
-}
+
+      // Rodapé “Criar rápido”: desabilita quando estiver selecionando
+      bottomNavigationBar: AnimatedPadding(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 8,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+        ),
+        child: SafeArea(
+          child: TextButton(
+            onPressed: selecionando ? null : criarProdutoRapido,
+            child: const Text('Não achei. Criar produto com esse nome'),
+          ),
+        ),
+      ),
+    );
+  }
 }

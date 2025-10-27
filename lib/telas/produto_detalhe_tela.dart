@@ -25,24 +25,38 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
   Color corEtiqueta = Colors.grey;
 
   Future<void> _carregar() async {
-    final p = await daoProdutos.buscarPorId(widget.produtoId);
-    final h = await daoRegistros.historicoRecentes(widget.produtoId, limite: 10);
+    try {
+      final p = await daoProdutos.buscarPorId(widget.produtoId);
+      final h = await daoRegistros.historicoRecentes(widget.produtoId, limite: 10);
 
-    setState(() {
-      produto = p;
-      historico = h;
-    });
-    _recalcularEtiqueta();
+      if (!mounted) return;
+      setState(() {
+        produto = p;
+        historico = h;
+      });
+      _recalcularEtiqueta();
+    } catch (e, st) {
+      debugPrint('❌ Erro ao carregar detalhes: $e\n$st');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Erro ao carregar produto')),
+      );
+    }
   }
 
   void _recalcularEtiqueta() {
     final ultimos = historico.map((e) => e['preco_centavos'] as int).toList();
     if (ultimos.isEmpty || precoCtrl.text.trim().isEmpty) {
-      setState(() { etiqueta = 'Sem base'; corEtiqueta = Colors.grey; });
+      if (!mounted) return;
+      setState(() {
+        etiqueta = 'Sem base';
+        corEtiqueta = Colors.grey;
+      });
       return;
     }
     final atual = parseReaisParaCentavos(precoCtrl.text);
     final s = statusPreco(atual, ultimos);
+    if (!mounted) return;
     setState(() {
       etiqueta = s;
       corEtiqueta = (s == 'Barato')
@@ -55,18 +69,25 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
 
   Future<void> _salvar() async {
     if (precoCtrl.text.trim().isEmpty) return;
-    final cent = parseReaisParaCentavos(precoCtrl.text);
-    await daoRegistros.salvarPreco(
-      produtoId: widget.produtoId,
-      precoCentavos: cent,
-      loja: lojaCtrl.text.trim().isEmpty ? null : lojaCtrl.text.trim(),
-      cidade: cidadeCtrl.text.trim().isEmpty ? null : cidadeCtrl.text.trim(),
-    );
-    precoCtrl.clear();
-    await _carregar();
-    if (mounted) {
+    try {
+      final cent = parseReaisParaCentavos(precoCtrl.text);
+      await daoRegistros.salvarPreco(
+        produtoId: widget.produtoId,
+        precoCentavos: cent,
+        loja: lojaCtrl.text.trim().isEmpty ? null : lojaCtrl.text.trim(),
+        cidade: cidadeCtrl.text.trim().isEmpty ? null : cidadeCtrl.text.trim(),
+      );
+      precoCtrl.clear();
+      await _carregar();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Preço salvo!')),
+      );
+    } catch (e, st) {
+      debugPrint('❌ Erro ao salvar preço: $e\n$st');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Erro ao salvar preço')),
       );
     }
   }
@@ -142,7 +163,7 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: corEtiqueta.withOpacity(0.15),
+                color: corEtiqueta.withOpacity(0.15), // <- corrigido
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: corEtiqueta),
               ),
@@ -173,7 +194,9 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
                   final r = historico[i];
                   final data = DateTime.fromMillisecondsSinceEpoch(r['criado_em'] as int);
                   final preco = centavosParaReais(r['preco_centavos'] as int);
-                  final dd = '${data.day.toString().padLeft(2, '0')}/${data.month.toString().padLeft(2, '0')}/${data.year}';
+                  final dd = '${data.day.toString().padLeft(2, '0')}/'
+                      '${data.month.toString().padLeft(2, '0')}/'
+                      '${data.year}';
                   return ListTile(
                     leading: const Icon(Icons.price_check),
                     title: Text(preco),
