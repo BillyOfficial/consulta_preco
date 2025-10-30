@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:consulta_preco/dados/produtos_dao.dart';
 import 'package:consulta_preco/dados/registros_dao.dart';
 import 'package:consulta_preco/dominio/status_preco.dart';
-import 'package:consulta_preco/servicos/local_loja_service.dart';
-import 'package:consulta_preco/widgets/selecionar_loja_sheet.dart';
 import 'package:consulta_preco/modelos/loja_model.dart';
+import 'package:consulta_preco/servicos/loja_selecionada_store.dart';
 
 class ProdutoDetalheTela extends StatefulWidget {
   final int produtoId;
@@ -17,11 +16,11 @@ class ProdutoDetalheTela extends StatefulWidget {
 class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
   final daoProdutos = ProdutosDAO();
   final daoRegistros = RegistrosDAO();
-  final _localLojaService = LocalLojaService();
+  final LojaSelecionadaStore _lojaStore = LojaSelecionadaStore.instance;
 
   LojaModel? _lojaSelecionada;
-  final bool _localComUmaLoja = false; // checkbox
-  bool _processandoLocal = false;
+  bool selecionandoHistorico = false;
+  final Set<int> registrosSelecionados = <int>{};
   final precoCtrl = TextEditingController();
   final lojaCtrl = TextEditingController();
   final cidadeCtrl = TextEditingController();
@@ -48,6 +47,12 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
       setState(() {
         produto = p;
         historico = h;
+        final idsAtuais = h
+            .map((e) => e['id'])
+            .whereType<int>()
+            .toSet();
+        registrosSelecionados.removeWhere((id) => !idsAtuais.contains(id));
+        if (registrosSelecionados.isEmpty) selecionandoHistorico = false;
       });
       _recalcularEtiqueta();
     } catch (e, st) {
@@ -93,53 +98,6 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
           ? Colors.red
           : Colors.amber;
     });
-  }
-
-  Future<void> _detectarLocalESelecionarLoja() async {
-    setState(() => _processandoLocal = true);
-    try {
-      // 1) Achar ou criar Local pelo GPS
-      final local = await _localLojaService.acharOuCriarLocal();
-
-      // 2) Se marcou “Local com 1 loja?”, cria/pega uma única loja
-      if (_localComUmaLoja) {
-        final loja = await _localLojaService.getOuCriarLojaUnica(local.id!);
-        setState(() => _lojaSelecionada = loja);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Local detectado: ${local.nome} · Loja: ${loja.nome}',
-              ),
-            ),
-          );
-        }
-        return;
-      }
-
-      // 3) Caso contrário, abre o bottom-sheet para selecionar/Adicionar
-      if (!mounted) return;
-      await showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        builder: (_) => SelecionarLojaSheet(
-          localId: local.id!,
-          onSelecionar: (loja) {
-            setState(() => _lojaSelecionada = loja);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Loja selecionada: ${loja.nome}')),
-            );
-          },
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Falha ao detectar local: $e')));
-    } finally {
-      if (mounted) setState(() => _processandoLocal = false);
-    }
   }
 
   Future<void> _salvar() async {
@@ -202,9 +160,120 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
   @override
   void initState() {
     super.initState();
+    _lojaSelecionada = _lojaStore.value;
+    _lojaStore.addListener(_sincronizarLojaSelecionada);
     _carregar();
     // Recalcula a etiqueta sempre que o usuário digitar o preço
     precoCtrl.addListener(_recalcularEtiqueta);
+  }
+
+  void _sincronizarLojaSelecionada() {
+    final selecionada = _lojaStore.value;
+    if (mounted) {
+      setState(() {
+        _lojaSelecionada = selecionada;
+        if (selecionada != null) {
+          lojaCtrl.clear();
+          cidadeCtrl.clear();
+        }
+      });
+    } else {
+      _lojaSelecionada = selecionada;
+    }
+  }
+
+  void _limparSelecaoHistorico() {
+    setState(() {
+      selecionandoHistorico = false;
+      registrosSelecionados.clear();
+    });
+  }
+
+  void _entrarSelecaoHistorico(int id) {
+    setState(() {
+      selecionandoHistorico = true;
+      registrosSelecionados
+        ..clear()
+        ..add(id);
+    });
+  }
+
+  void _alternarSelecaoHistorico(int id) {
+    setState(() {
+      if (!selecionandoHistorico) {
+        selecionandoHistorico = true;
+        registrosSelecionados.add(id);
+        return;
+      }
+      if (!registrosSelecionados.remove(id)) {
+        registrosSelecionados.add(id);
+      }
+      if (registrosSelecionados.isEmpty) {
+        selecionandoHistorico = false;
+      }
+    });
+  }
+
+  Future<void> _excluirRegistrosSelecionados() async {
+    if (registrosSelecionados.isEmpty) return;
+    final confirmar = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Excluir registros selecionados'),
+            content: Text(
+              'Confirmar exclusão de ${registrosSelecionados.length} registro(s)?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Excluir'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmar) return;
+
+    try {
+      final removidos = await daoRegistros.excluirPorIds(registrosSelecionados);
+      _limparSelecaoHistorico();
+      await _carregar();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Removidos: $removidos registro(s)')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao excluir registros: $e')),
+      );
+    }
+  }
+
+  PreferredSizeWidget _buildAppBar() {
+    if (!selecionandoHistorico) {
+      return AppBar(title: const Text('Produto Detalhe'));
+    }
+    final total = registrosSelecionados.length;
+    return AppBar(
+      leading: IconButton(
+        tooltip: 'Sair da seleção',
+        icon: const Icon(Icons.close),
+        onPressed: _limparSelecaoHistorico,
+      ),
+      title: Text('$total selecionado(s)'),
+      actions: [
+        IconButton(
+          tooltip: 'Excluir selecionados',
+          icon: const Icon(Icons.delete),
+          onPressed: total > 0 ? _excluirRegistrosSelecionados : null,
+        ),
+      ],
+    );
   }
 
   @override
@@ -212,13 +281,14 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
     precoCtrl.dispose();
     lojaCtrl.dispose();
     cidadeCtrl.dispose();
+    _lojaStore.removeListener(_sincronizarLojaSelecionada);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Produto Detalhe')),
+      appBar: _buildAppBar(),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -259,35 +329,43 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
             ),
             const SizedBox(height: 12),
 
-            // Botões de ação
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _processandoLocal
-                        ? null
-                        : _detectarLocalESelecionarLoja,
-                    icon: _processandoLocal
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.place_outlined),
-                    label: Text(
-                      _lojaSelecionada == null
-                          ? 'Detectar local / escolher loja'
-                          : 'Loja: ${_lojaSelecionada!.nome}',
-                    ),
+            // Loja selecionada ou campos manuais
+            if (_lojaSelecionada != null)
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.storefront),
+                  title: Text(_lojaSelecionada!.nome),
+                  subtitle: Text(
+                    'Loja selecionada na tela inicial (ID: ${_lojaSelecionada!.id ?? '-'} · Local ${_lojaSelecionada!.localId})',
                   ),
+                  trailing: const Icon(Icons.check_circle, color: Colors.green),
                 ),
-                const SizedBox(width: 12),
-                FilledButton.icon(
-                  onPressed: _salvar,
-                  icon: const Icon(Icons.save_outlined),
-                  label: const Text('Salvar'),
+              )
+            else ...[
+              const Text('Informe a loja manualmente:'),
+              const SizedBox(height: 8),
+              TextField(
+                controller: lojaCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Nome da loja',
+                  border: OutlineInputBorder(),
                 ),
-              ],
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: cidadeCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Cidade',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _salvar,
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Salvar'),
             ),
 
             const SizedBox(height: 16),
@@ -334,10 +412,37 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
                             ? 'Data: $data'
                             : 'Data não informada';
 
-                        return ListTile(
-                          leading: const Icon(Icons.history),
-                          title: Text('$precoTexto - $lojaTexto'),
-                          subtitle: Text(detalhes),
+                        final id = (r['id'] as num?)?.toInt();
+                        final selecionado =
+                            id != null && registrosSelecionados.contains(id);
+
+                        return Card(
+                          color: selecionandoHistorico && selecionado
+                              ? Theme.of(context)
+                                  .colorScheme
+                                  .primaryContainer
+                              : null,
+                          child: ListTile(
+                            leading: selecionandoHistorico
+                                ? Checkbox(
+                                    value: selecionado,
+                                    onChanged: id == null
+                                        ? null
+                                        : (_) =>
+                                            _alternarSelecaoHistorico(id),
+                                  )
+                                : const Icon(Icons.history),
+                            title: Text('$precoTexto - $lojaTexto'),
+                            subtitle: Text(detalhes),
+                            selected: selecionado,
+                            onTap: () {
+                              if (!selecionandoHistorico || id == null) return;
+                              _alternarSelecaoHistorico(id);
+                            },
+                            onLongPress: id == null
+                                ? null
+                                : () => _entrarSelecaoHistorico(id),
+                          ),
                         );
                       },
                     ),

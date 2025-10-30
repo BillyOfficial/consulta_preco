@@ -182,4 +182,16 @@ class RegistrosDAO {
     final id = await db.insert('registros', map);
     return id;
   }
+
+  Future<int> excluirPorIds(Iterable<int> ids) async {
+    final lista = ids.toList();
+    if (lista.isEmpty) return 0;
+    final db = await BancoDados().banco;
+    final placeholders = List.filled(lista.length, '?').join(',');
+    return db.delete(
+      'registros',
+      where: 'id IN ($placeholders)',
+      whereArgs: lista,
+    );
+  }
 }
