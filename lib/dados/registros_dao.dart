@@ -1,5 +1,4 @@
 import 'package:flutter/foundation.dart';
-
 import 'banco_dados.dart';
 
 class RegistrosDAO {
@@ -16,9 +15,9 @@ class RegistrosDAO {
       'produto_id': produtoId,
       'preco': preco,
       'data': dataIso,
-      'loja': loja,
-      'cidade': cidade,
+      'loja': loja, // mantém loja (compat com tabela atual)
     });
+
     debugPrint('💾 Registro inserido com id: $id (produto $produtoId)');
     return id;
   }
@@ -32,7 +31,9 @@ class RegistrosDAO {
       whereArgs: [produtoId],
       orderBy: 'data DESC',
     );
-    debugPrint('📜 Encontrados ${res.length} registros para produto $produtoId');
+    debugPrint(
+      '📜 Encontrados ${res.length} registros para produto $produtoId',
+    );
     return res;
   }
 
@@ -73,12 +74,28 @@ class RegistrosDAO {
       'produto_id': produtoId,
       'preco': valor,
       'data': dataIso,
-      'loja': loja,
-      'cidade': cidade,
+      'loja': loja, // mantém loja
+      // 'cidade': cidade, // REMOVER
     });
 
     debugPrint(
       '🏪 Preço $valor salvo para produto $produtoId (loja: ${loja ?? "?"}, cidade: ${cidade ?? "?"})',
     );
+  }
+
+  Future<int> inserirComLojaId({
+    required int produtoId,
+    required double preco,
+    required String dataIso,
+    required int lojaId,
+  }) async {
+    final db = await BancoDados().banco;
+    final id = await db.insert('registros', {
+      'produto_id': produtoId,
+      'preco': preco,
+      'data': dataIso,
+      'loja_id': lojaId,
+    });
+    return id;
   }
 }

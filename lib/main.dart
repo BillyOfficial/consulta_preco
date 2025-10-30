@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'telas/pesquisar_produto_tela.dart';
+import 'package:consulta_preco/telas/pesquisar_produto_tela.dart';
 
 void main() {
   runApp(const ConsultaPrecoApp());
@@ -44,9 +44,11 @@ class TelaInicial extends StatelessWidget {
                 label: const Text('Buscar por Produto'),
                 onPressed: () {
                   Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const PesquisarProdutoTela()),
-                );
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const PesquisarProdutoTela(),
+                    ),
+                  );
                 },
               ),
             ],

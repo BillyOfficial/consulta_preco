@@ -1,64 +1,114 @@
-import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 
 class BancoDados {
-  static final BancoDados _instancia = BancoDados._interno();
-  Database? _db;
-
+  static final BancoDados _instancia = BancoDados._();
+  BancoDados._();
   factory BancoDados() => _instancia;
-  BancoDados._interno();
 
-  Future<Database> get banco async {
-    if (_db != null) return _db!;
-    _db = await _abrir();
-    return _db!;
-  }
+  static const _dbNome = 'consulta_preco.db';
+  // ⬇️ AUMENTE A VERSÃO (deixe em 3, como combinamos)
+  static const _dbVersion = 3;
+
+  Database? _db;
+  Future<Database> get banco async => _db ??= await _abrir();
 
   Future<Database> _abrir() async {
-    final dir = await getDatabasesPath();
-    final caminho = p.join(dir, 'consulta_preco.db');
-    return await openDatabase(
-      caminho,
-      version: 2, // 👈 aumenta a versão para recriar o banco
-      onCreate: (db, version) async {
-        await _criarTabelas(db);
+    final caminho = await getDatabasesPath();
+    final dbPath = p.join(caminho, _dbNome);
+    return openDatabase(
+      dbPath,
+      version: _dbVersion,
+      // ✅ Garante Foreign Keys no SQLite
+      onConfigure: (db) async {
+        await db.execute('PRAGMA foreign_keys = ON;');
       },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        await _recriarTabelas(db);
-      },
+      onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
-  Future<void> _criarTabelas(Database db) async {
-    // Tabela de produtos
+  Future<void> _onCreate(Database db, int version) async {
+    // Tabela produtos (mantendo sua estrutura original)
     await db.execute('''
-      CREATE TABLE produtos (
+      CREATE TABLE IF NOT EXISTS produtos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome TEXT NOT NULL,
-        ean TEXT
+        ean TEXT,
+        nome TEXT NOT NULL
       );
     ''');
 
-    // Tabela de registros de preços
+    // Tabela registros (mantendo colunas legadas e já prevendo loja_id)
     await db.execute('''
-      CREATE TABLE registros (
+      CREATE TABLE IF NOT EXISTS registros (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         produto_id INTEGER NOT NULL,
         preco REAL NOT NULL,
         data TEXT NOT NULL,
-        loja TEXT,
-        FOREIGN KEY (produto_id) REFERENCES produtos (id) ON DELETE CASCADE
+        loja TEXT,         -- legado (mantido por compat)
+        loja_id INTEGER,   -- novo
+        FOREIGN KEY(produto_id) REFERENCES produtos(id) ON DELETE CASCADE
+        -- FOREIGN KEY(loja_id) REFERENCES lojas(id) ON DELETE SET NULL -- será válido após criarmos lojas
       );
     ''');
 
-    debugPrint('✅ Tabelas criadas com sucesso');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_reg_produto ON registros(produto_id);');
+
+    // ⬇️ Novas tabelas para Local/Loja
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS locais (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT NOT NULL,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        raio_metros REAL NOT NULL DEFAULT 150,
+        criado_em TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS lojas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        local_id INTEGER NOT NULL,
+        nome TEXT NOT NULL,
+        criado_em TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(local_id) REFERENCES locais(id) ON DELETE CASCADE
+      );
+    ''');
+
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_lojas_local ON lojas(local_id);');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_reg_loja_id ON registros(loja_id);');
   }
 
-  Future<void> _recriarTabelas(Database db) async {
-    // Remove antigas (durante testes)
-    await db.execute('DROP TABLE IF EXISTS registros;');
-    await db.execute('DROP TABLE IF EXISTS produtos;');
-    await _criarTabelas(db);
+  Future<void> _onUpgrade(Database db, int oldV, int newV) async {
+    // 🚫 NÃO RECRIAR TABELAS! Só migrar.
+    if (oldV < 2) {
+      // v2: adiciona loja_id + índice
+      await db.execute('ALTER TABLE registros ADD COLUMN loja_id INTEGER;');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_reg_loja_id ON registros(loja_id);');
+    }
+    if (oldV < 3) {
+      // v3: cria locais e lojas (se ainda não existem)
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS locais (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          nome TEXT NOT NULL,
+          latitude REAL NOT NULL,
+          longitude REAL NOT NULL,
+          raio_metros REAL NOT NULL DEFAULT 150,
+          criado_em TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+      ''');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS lojas (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          local_id INTEGER NOT NULL,
+          nome TEXT NOT NULL,
+          criado_em TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(local_id) REFERENCES locais(id) ON DELETE CASCADE
+        );
+      ''');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_lojas_local ON lojas(local_id);');
+    }
   }
 }
