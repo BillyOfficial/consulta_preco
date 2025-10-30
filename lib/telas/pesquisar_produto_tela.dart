@@ -15,6 +15,13 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
 
   bool carregando = false;
   List<Map<String, dynamic>> resultados = [];
+  int _buscaToken = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    buscar();
+  }
 
   // ---- multi-seleção ----
   bool selecionando = false;
@@ -26,16 +33,7 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
 
   Future<void> buscar() async {
     final termo = campoBusca.text.trim();
-
-    if (termo.isEmpty) {
-      if (!mounted) return;
-      setState(() {
-        resultados = [];
-        carregando = false;
-        _limparSelecao();
-      });
-      return;
-    }
+    final tokenAtual = ++_buscaToken;
 
     if (!mounted) return;
     setState(() => carregando = true);
@@ -43,28 +41,28 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
     try {
       final dados = await dao.buscarPorNome(termo);
       debugPrint(
-        '🔎 BuscarPorNome("$termo") retornou ${dados.length} resultados',
+        'BuscarPorNome("$termo") retornou ${dados.length} resultados',
       );
 
-      if (!mounted) return;
+      if (!mounted || tokenAtual != _buscaToken) return;
       setState(() {
         resultados = dados;
         carregando = false;
 
-        // Se estamos selecionando, mantenha só IDs que ainda existem na lista
         final visiveis = dados.map<int>((m) => m['id'] as int).toSet();
         selecionados.removeWhere((id) => !visiveis.contains(id));
         if (selecionados.isEmpty) selecionando = false;
       });
-    } catch (e, st) {
-      debugPrint('❌ Erro ao buscar: $e\n$st');
-      if (!mounted) return;
+    } catch (e) {
+      debugPrint('? Erro ao buscar: $e');
+      if (!mounted || tokenAtual != _buscaToken) return;
       setState(() => carregando = false);
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Erro ao buscar produtos')));
     }
   }
+
 
   Future<void> criarProdutoRapido() async {
     final nome = campoBusca.text.trim();
@@ -76,6 +74,7 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
 
       if (!mounted) return;
       await buscar();
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Produto "$nome" criado')));
@@ -134,6 +133,7 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
     final ctrl = TextEditingController(text: nomeAtual);
 
     // abre o diálogo para digitar o novo nome
+    if (!mounted) return;
     final novoNome = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
@@ -177,10 +177,12 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
       }
     } on StateError catch (e) {
       if (e.message == 'duplicado') {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Já existe um produto com esse nome.')),
         );
       } else {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Erro ao renomear produto.')),
         );
@@ -313,6 +315,7 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
                       controller: campoBusca,
                       textInputAction: TextInputAction.search,
                       onSubmitted: (_) => buscar(),
+                      onChanged: (_) => buscar(),
                       decoration: const InputDecoration(
                         labelText: 'Nome do produto',
                         border: OutlineInputBorder(),

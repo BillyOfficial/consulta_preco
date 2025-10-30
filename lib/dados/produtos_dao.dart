@@ -98,7 +98,15 @@ class ProdutosDAO {
     final db = await _db;
     final termoLimpo = termo.trim();
 
-    if (termoLimpo.isEmpty) return [];
+    if (termoLimpo.isEmpty) {
+      final res = await db.query(
+        'produtos',
+        orderBy: 'LOWER(nome) ASC',
+        limit: 100,
+      );
+      debugPrint('Listando ${res.length} produtos (ordenados)');
+      return res;
+    }
 
     final like = '%${_escapeLike(termoLimpo.toLowerCase())}%';
     final res = await db.query(

@@ -4,7 +4,6 @@ import 'package:consulta_preco/dados/registros_dao.dart';
 import 'package:consulta_preco/dominio/status_preco.dart';
 import 'package:consulta_preco/servicos/local_loja_service.dart';
 import 'package:consulta_preco/widgets/selecionar_loja_sheet.dart';
-import 'package:consulta_preco/modelos/local_model.dart';
 import 'package:consulta_preco/modelos/loja_model.dart';
 
 class ProdutoDetalheTela extends StatefulWidget {
@@ -20,7 +19,6 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
   final daoRegistros = RegistrosDAO();
   final _localLojaService = LocalLojaService();
 
-  LocalModel? _localAtual; // ainda não usado na UI
   LojaModel? _lojaSelecionada;
   final bool _localComUmaLoja = false; // checkbox
   bool _processandoLocal = false;
@@ -102,7 +100,6 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
     try {
       // 1) Achar ou criar Local pelo GPS
       final local = await _localLojaService.acharOuCriarLocal();
-      setState(() => _localAtual = local);
 
       // 2) Se marcou “Local com 1 loja?”, cria/pega uma única loja
       if (_localComUmaLoja) {
@@ -147,23 +144,35 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
 
   Future<void> _salvar() async {
     if (precoCtrl.text.trim().isEmpty) return;
+    late final int valorCentavos;
+    // valida preco digitado antes de salvar
     try {
-      final valor = parseReaisParaCentavos(precoCtrl.text);
+      valorCentavos = parseReaisParaCentavos(precoCtrl.text);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Pre\u00E7o inv\u00E1lido')));
+      return;
+    }
+    try {
+      final lojaSelecionada = _lojaSelecionada;
+      final possuiColunaLojaId = lojaSelecionada?.id != null &&
+          await daoRegistros.temColunaLojaId();
 
-      // ✅ NOVO: se houver loja detectada/selecionada, usa loja_id
-      if (_lojaSelecionada?.id != null) {
+      if (possuiColunaLojaId && lojaSelecionada != null) {
         await daoRegistros.inserirComLojaId(
           produtoId: widget.produtoId,
-          preco: valor / 100, // se seu inserir usa REAL, divida por 100
+          preco: valorCentavos / 100,
           dataIso: DateTime.now().toIso8601String(),
-          lojaId: _lojaSelecionada!.id!,
+          lojaId: lojaSelecionada.id!,
         );
       } else {
-        // 🧩 Antigo: mantém compatibilidade
+        final fallbackLoja = lojaSelecionada?.nome ??
+            (lojaCtrl.text.trim().isEmpty ? null : lojaCtrl.text.trim());
         await daoRegistros.salvarPreco(
           produtoId: widget.produtoId,
-          precoCentavos: valor,
-          loja: lojaCtrl.text.trim().isEmpty ? null : lojaCtrl.text.trim(),
+          precoCentavos: valorCentavos,
+          loja: fallbackLoja,
           cidade: cidadeCtrl.text.trim().isEmpty
               ? null
               : cidadeCtrl.text.trim(),
@@ -171,19 +180,24 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
       }
 
       precoCtrl.clear();
-      await _carregar();
+      try {
+        await _carregar();
+      } catch (e) {
+        debugPrint('Aviso: salvo, mas falhou recarregar: $e');
+      }
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Preço salvo!')));
-    } catch (e, st) {
-      debugPrint('❌ Erro ao salvar preço: $e\n$st');
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Pre\u00E7o salvo!')));
+    } catch (e) {
+      debugPrint('Erro ao salvar pre\u00E7o: $e');
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Erro ao salvar preço')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Erro ao salvar pre\u00E7o')));
     }
   }
+
+
+
 
   @override
   void initState() {
@@ -306,16 +320,24 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
                                     '')
                                 .toString();
 
+                        final lojaNome = (r['loja_nome'] ?? r['loja'])
+                            ?.toString()
+                            .trim();
+                        final precoTexto = precoReais != null
+                            ? 'R\$ ${precoReais.toStringAsFixed(2)}'
+                            : 'Preço não informado';
+                        final lojaTexto =
+                            (lojaNome != null && lojaNome.isNotEmpty)
+                                ? lojaNome
+                                : 'Loja não informada';
+                        final detalhes = data.isNotEmpty
+                            ? 'Data: $data'
+                            : 'Data não informada';
+
                         return ListTile(
                           leading: const Icon(Icons.history),
-                          title: Text(
-                            precoReais != null
-                                ? 'R\$ ${precoReais.toStringAsFixed(2)}'
-                                : 'Preço não informado',
-                          ),
-                          subtitle: Text(
-                            data.isNotEmpty ? data : 'Data não informada',
-                          ),
+                          title: Text('$precoTexto - $lojaTexto'),
+                          subtitle: Text(detalhes),
                         );
                       },
                     ),
@@ -326,3 +348,7 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
     );
   }
 }
+
+
+
+
