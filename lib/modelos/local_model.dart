@@ -15,6 +15,24 @@ class LocalModel {
     this.criadoEm,
   });
 
+  LocalModel copyWith({
+    int? id,
+    String? nome,
+    double? latitude,
+    double? longitude,
+    double? raioMetros,
+    String? criadoEm,
+  }) {
+    return LocalModel(
+      id: id ?? this.id,
+      nome: nome ?? this.nome,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      raioMetros: raioMetros ?? this.raioMetros,
+      criadoEm: criadoEm ?? this.criadoEm,
+    );
+  }
+
   Map<String, dynamic> toMap() => {
         if (id != null) 'id': id,
         'nome': nome,

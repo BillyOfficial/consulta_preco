@@ -45,7 +45,7 @@ class _TelaInicialState extends State<TelaInicial> {
         context: context,
         isScrollControlled: true,
         builder: (_) => SelecionarLojaSheet(
-          localId: local.id!,
+          local: local,
           onSelecionar: (loja) {
             lojaSelecionada = loja;
             LojaSelecionadaStore.instance.atualizar(loja);
