@@ -26,6 +26,16 @@ class LocaisDAO {
     return res.map((m) => LocalModel.fromMap(m)).toList();
   }
 
+  Future<void> atualizarNome(int id, String novoNome) async {
+    final db = await BancoDados().banco;
+    await db.update(
+      'locais',
+      {'nome': novoNome},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   /// Retorna o primeiro Local cujo centro esteja a até `raio_metros` do ponto atual.
   Future<LocalModel?> acharLocalPorGPS({
     required double latitudeAtual,
