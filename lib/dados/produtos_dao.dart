@@ -16,6 +16,12 @@ class ProdutosDAO {
   /// Insere um produto e SEMPRE retorna o id do registro existente/criado.
   /// - Se já existir (por EAN ou nome igual ignorando maiúsculas), retorna o id existente.
   /// - Se não existir, cria e retorna o novo id.
+  ///
+  /// A busca por existente acontece ANTES do insert. Isso é essencial para as
+  /// notas fiscais: a NFC-e não traz o EAN (só o código interno do mercado),
+  /// então um item que você já escaneou (ou marcou como granel) numa compra
+  /// anterior precisa ser reconhecido pelo NOME — senão o app criaria um produto
+  /// novo e vazio a cada nota, fazendo o item reaparecer como "sem EAN".
   Future<int> inserir({
     String? ean,
     required String nome,
@@ -24,34 +30,16 @@ class ProdutosDAO {
   }) async {
     final db = await _db;
     final nomeLimpo = nome.trim();
+    final eanLimpo = (ean?.trim().isEmpty ?? true) ? null : ean!.trim();
 
-    // 1) Tenta inserir (ignora conflito).
-    // nome_original preserva o nome cru (ex.: da NFC-e); por padrão = nome.
-    final novoId = await db.insert(
-      'produtos',
-      {
-        'ean': (ean?.trim().isEmpty ?? true) ? null : ean!.trim(),
-        'nome': nomeLimpo,
-        'nome_original': (nomeOriginal ?? nome).trim(),
-        'sem_codigo': semCodigo ? 1 : 0,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
-
-    if (novoId != 0) {
-      // Inseriu de primeira
-      debugPrint('💾 Produto salvo com id: $novoId');
-      return novoId;
-    }
-
-    // 2) Se não inseriu (provável duplicata), tente recuperar o id existente
-    // 2a) Preferência: EAN
-    if (ean != null && ean.trim().isNotEmpty) {
+    // 1) GET — reaproveita produto já existente.
+    // 1a) Preferência máxima: alguém já tem este EAN (identificador universal).
+    if (eanLimpo != null) {
       final rEan = await db.query(
         'produtos',
         columns: ['id'],
         where: 'ean = ?',
-        whereArgs: [ean.trim()],
+        whereArgs: [eanLimpo],
         limit: 1,
       );
       if (rEan.isNotEmpty) {
@@ -61,21 +49,70 @@ class ProdutosDAO {
       }
     }
 
-    // 2b) Fallback: nome case-insensitive
+    // 1b) Mesmo nome (case-insensitive). Se houver duplicatas, prefere a linha
+    //     já resolvida: primeiro a que tem EAN, depois a marcada como granel e,
+    //     por fim, a mais antiga — assim o status anterior é reaproveitado.
     final rNome = await db.query(
+      'produtos',
+      columns: ['id', 'ean'],
+      where: 'LOWER(nome) = ?',
+      whereArgs: [nomeLimpo.toLowerCase()],
+      orderBy: "(ean IS NOT NULL AND ean <> '') DESC, "
+          'COALESCE(sem_codigo, 0) DESC, id ASC',
+      limit: 1,
+    );
+    if (rNome.isNotEmpty) {
+      final existente = rNome.first;
+      final id = existente['id'] as int;
+      final eanExistente = (existente['ean'] ?? '').toString();
+
+      // Se a nota trouxe um EAN e o produto ainda não tinha, enriquece-o.
+      // (atualizarEan não sobrescreve nem quebra se o EAN for de outro produto.)
+      if (eanLimpo != null && eanExistente.isEmpty) {
+        await atualizarEan(id: id, ean: eanLimpo);
+      }
+      debugPrint('ℹ️ Produto já existia (NOME). id: $id');
+      return id;
+    }
+
+    // 2) CREATE — não existe: cria.
+    // nome_original preserva o nome cru (ex.: da NFC-e); por padrão = nome.
+    final novoId = await db.insert(
+      'produtos',
+      {
+        'ean': eanLimpo,
+        'nome': nomeLimpo,
+        'nome_original': (nomeOriginal ?? nome).trim(),
+        'sem_codigo': semCodigo ? 1 : 0,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+    if (novoId != 0) {
+      debugPrint('💾 Produto salvo com id: $novoId');
+      return novoId;
+    }
+
+    // 3) Corrida rara: o índice UNIQUE de EAN barrou o insert entre a checagem
+    //    e agora. Recupera o id existente (por EAN e, se não, por nome).
+    if (eanLimpo != null) {
+      final rEan = await db.query(
+        'produtos',
+        columns: ['id'],
+        where: 'ean = ?',
+        whereArgs: [eanLimpo],
+        limit: 1,
+      );
+      if (rEan.isNotEmpty) return rEan.first['id'] as int;
+    }
+    final r2 = await db.query(
       'produtos',
       columns: ['id'],
       where: 'LOWER(nome) = ?',
       whereArgs: [nomeLimpo.toLowerCase()],
       limit: 1,
     );
-    if (rNome.isNotEmpty) {
-      final id = rNome.first['id'] as int;
-      debugPrint('ℹ️ Produto já existia (NOME). id: $id');
-      return id;
-    }
+    if (r2.isNotEmpty) return r2.first['id'] as int;
 
-    // 3) Situação rara
     debugPrint('⚠️ Insert ignorado e registro não encontrado. Verifique índices/constraints.');
     return 0;
   }
@@ -253,6 +290,58 @@ class ProdutosDAO {
       DELETE FROM produtos
        WHERE ean IS NOT NULL
          AND id > (SELECT MIN(p.id) FROM produtos p WHERE p.ean = produtos.ean)
+    ''');
+  }
+
+  /// Consolida produtos duplicados de MESMO nome (case-insensitive) que foram
+  /// criados por importações de nota antes do get-or-create por nome.
+  ///
+  /// Para cada nome, elege um produto "canônico" — preferindo o que tem EAN,
+  /// depois o marcado como granel e, por fim, o mais antigo — e funde nele
+  /// APENAS as cópias sem EAN (re-apontando os preços e apagando as cópias).
+  /// Linhas com EAN próprio distinto são preservadas (podem ser produtos
+  /// diferentes com o mesmo nome). Assim, notas já importadas passam a exibir
+  /// o EAN/granel que você já havia registrado, sem reescanear.
+  ///
+  /// O canônico é escolhido pela mesma regra usada em [inserir], então a fusão
+  /// é consistente com o comportamento de novas importações.
+  static Future<void> dedupPorNome(Database db) async {
+    // Expressão que elege o id canônico para um dado nome (LOWER).
+    const canonicoDoNome = '''
+      SELECT p.id FROM produtos p
+       WHERE LOWER(p.nome) = LOWER(d.nome)
+       ORDER BY (p.ean IS NOT NULL AND p.ean <> '') DESC,
+                COALESCE(p.sem_codigo, 0) DESC,
+                p.id ASC
+       LIMIT 1
+    ''';
+
+    // 1) Re-aponta os preços das cópias SEM EAN para o produto canônico.
+    await db.execute('''
+      UPDATE registros
+         SET produto_id = (
+           SELECT ($canonicoDoNome)
+             FROM produtos d WHERE d.id = registros.produto_id
+         )
+       WHERE produto_id IN (
+         SELECT d.id FROM produtos d
+          WHERE (d.ean IS NULL OR d.ean = '')
+            AND d.id <> ($canonicoDoNome)
+       )
+    ''');
+
+    // 2) Apaga as cópias SEM EAN que não são o canônico (os preços já saíram).
+    await db.execute('''
+      DELETE FROM produtos
+       WHERE (ean IS NULL OR ean = '')
+         AND id <> (
+           SELECT p.id FROM produtos p
+            WHERE LOWER(p.nome) = LOWER(produtos.nome)
+            ORDER BY (p.ean IS NOT NULL AND p.ean <> '') DESC,
+                     COALESCE(p.sem_codigo, 0) DESC,
+                     p.id ASC
+            LIMIT 1
+         )
     ''');
   }
 
