@@ -66,18 +66,23 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
 
   Future<void> criarProdutoRapido() async {
     final nome = campoBusca.text.trim();
-    if (nome.isEmpty) return;
+    if (nome.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Digite o nome do produto no campo acima.')),
+      );
+      return;
+    }
 
     try {
       final id = await dao.inserir(nome: nome);
-      debugPrint('💾 Produto salvo com id: $id');
-
+      if (!mounted) return;
+      // Abre o produto recém-criado para já adicionar EAN e o primeiro preço.
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => ProdutoDetalheTela(produtoId: id)),
+      );
       if (!mounted) return;
       await buscar();
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Produto "$nome" criado')));
     } catch (e, st) {
       debugPrint('❌ Erro ao criar produto: $e\n$st');
       if (!mounted) return;
@@ -85,6 +90,19 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
         context,
       ).showSnackBar(const SnackBar(content: Text('Erro ao criar produto')));
     }
+  }
+
+  /// Espaço reservado para a futura foto do produto.
+  Widget _placeholderFoto() {
+    return Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Icon(Icons.image_outlined, color: Colors.grey.shade400, size: 22),
+    );
   }
 
   // ---- helpers de seleção ----
@@ -348,24 +366,27 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
                           final id = item['id'] as int;
                           final nome = (item['nome'] ?? '').toString();
                           final ean = item['ean']?.toString();
+                          final granel = (item['sem_codigo'] as int? ?? 0) == 1;
                           final marcado = selecionados.contains(id);
+
+                          final subtitulo = granel
+                              ? 'Granel'
+                              : (ean == null || ean.isEmpty)
+                                  ? 'Sem EAN'
+                                  : 'EAN: $ean';
 
                           return Card(
                             child: ListTile(
-                              // CheckBox à esquerda quando em modo seleção
+                              // Foto (placeholder) ou checkbox no modo seleção.
                               leading: selecionando
                                   ? Checkbox(
                                       value: marcado,
                                       onChanged: (_) => _alternarSelecao(id),
                                     )
-                                  : null,
+                                  : _placeholderFoto(),
 
                               title: Text(nome.isEmpty ? 'Sem nome' : nome),
-                              subtitle: Text(
-                                (ean == null || ean.isEmpty)
-                                    ? 'Sem EAN'
-                                    : 'EAN: $ean',
-                              ),
+                              subtitle: Text(subtitulo),
                               trailing: selecionando
                                   ? null
                                   : const Icon(Icons.chevron_right),
@@ -408,9 +429,11 @@ class _PesquisarProdutoTelaState extends State<PesquisarProdutoTela> {
           bottom: MediaQuery.of(context).viewInsets.bottom + 16,
         ),
         child: SafeArea(
-          child: TextButton(
+          child: OutlinedButton.icon(
             onPressed: selecionando ? null : criarProdutoRapido,
-            child: const Text('Não achei. Criar produto com esse nome'),
+            icon: const Icon(Icons.add),
+            label: const Text('Cadastrar novo produto'),
+            style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
           ),
         ),
       ),

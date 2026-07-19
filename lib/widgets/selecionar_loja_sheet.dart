@@ -77,12 +77,12 @@ class _SelecionarLojaSheetState extends State<SelecionarLojaSheet> {
   Future<void> _adicionar() async {
     final nome = _ctrlNome.text.trim();
     if (nome.isEmpty) return;
-    final id = await _lojasDao
-        .inserir(LojaModel(localId: _localAtual.id!, nome: nome));
+    final localId = _localAtual.id;
+    if (localId == null) return;
+    final id = await _lojasDao.inserir(LojaModel(localId: localId, nome: nome));
     _ctrlNome.clear();
-    await _carregar();
-    final selecionada = _lojas.firstWhere((l) => l.loja.id == id).loja;
-    widget.onSelecionar(selecionada);
+    // Seleciona a loja recém-criada diretamente (sem depender de recarregar a lista).
+    widget.onSelecionar(LojaModel(id: id, localId: localId, nome: nome));
     if (mounted) Navigator.pop(context);
   }
 

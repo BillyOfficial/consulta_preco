@@ -12,10 +12,19 @@ class PesquisarEanTela extends StatefulWidget {
 }
 
 class _PesquisarEanTelaState extends State<PesquisarEanTela> {
+  // Restringe a leitura aos códigos de barras de produto (1D).
+  // Sem isso, o scanner também lê QR Codes e tratava o conteúdo do QR como se
+  // fosse um EAN — origem do bug ao mirar embalagens/etiquetas com QR.
   final _controller = MobileScannerController(
     facing: CameraFacing.back,
-    detectionSpeed: DetectionSpeed.normal,
+    detectionSpeed: DetectionSpeed.noDuplicates,
     autoStart: true,
+    formats: const [
+      BarcodeFormat.ean13,
+      BarcodeFormat.ean8,
+      BarcodeFormat.upcA,
+      BarcodeFormat.upcE,
+    ],
   );
   final _dao = ProdutosDAO();
 
@@ -129,10 +138,10 @@ class _PesquisarEanTelaState extends State<PesquisarEanTela> {
       appBar: AppBar(
         title: const Text('Pesquisar por EAN'),
         actions: [
-          ValueListenableBuilder<TorchState>(
-            valueListenable: _controller.torchState,
+          ValueListenableBuilder<MobileScannerState>(
+            valueListenable: _controller,
             builder: (context, state, _) {
-              final ligado = state == TorchState.on;
+              final ligado = state.torchState == TorchState.on;
               return IconButton(
                 tooltip: ligado ? 'Desligar flash' : 'Ligar flash',
                 icon: Icon(ligado ? Icons.flash_on : Icons.flash_off),

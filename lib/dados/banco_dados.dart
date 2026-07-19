@@ -1,5 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
+import 'produtos_dao.dart';
 
 class BancoDados {
   static final BancoDados _instancia = BancoDados._();
@@ -7,8 +8,7 @@ class BancoDados {
   factory BancoDados() => _instancia;
 
   static const _dbNome = 'consulta_preco.db';
-  // ⬇️ AUMENTE A VERSÃO (deixe em 3, como combinamos)
-  static const _dbVersion = 3;
+  static const _dbVersion = 6;
 
   Database? _db;
   Future<Database> get banco async => _db ??= await _abrir();
@@ -29,12 +29,15 @@ class BancoDados {
   }
 
   Future<void> _onCreate(Database db, int version) async {
-    // Tabela produtos (mantendo sua estrutura original)
+    // Tabela produtos. `nome` é o de exibição (popular, editável);
+    // `nome_original` preserva o nome cru vindo da NFC-e/SEFAZ.
     await db.execute('''
       CREATE TABLE IF NOT EXISTS produtos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ean TEXT,
-        nome TEXT NOT NULL
+        nome TEXT NOT NULL,
+        nome_original TEXT,
+        sem_codigo INTEGER NOT NULL DEFAULT 0
       );
     ''');
 
@@ -47,6 +50,7 @@ class BancoDados {
         data TEXT NOT NULL,
         loja TEXT,         -- legado (mantido por compat)
         loja_id INTEGER,   -- novo
+        nota_chave TEXT,   -- chave da NFC-e de origem (quando veio de nota)
         FOREIGN KEY(produto_id) REFERENCES produtos(id) ON DELETE CASCADE
         -- FOREIGN KEY(loja_id) REFERENCES lojas(id) ON DELETE SET NULL -- será válido após criarmos lojas
       );
@@ -78,6 +82,24 @@ class BancoDados {
 
     await db.execute('CREATE INDEX IF NOT EXISTS idx_lojas_local ON lojas(local_id);');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_reg_loja_id ON registros(loja_id);');
+
+    // v4: índices de produtos (EAN único parcial + nome case-insensitive)
+    await ProdutosDAO.criarIndices(db);
+
+    // v4: notas fiscais já importadas (evita reimportar a mesma NFC-e)
+    await _criarTabelaNotas(db);
+  }
+
+  Future<void> _criarTabelaNotas(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS notas_importadas (
+        chave TEXT PRIMARY KEY,
+        emitente TEXT,
+        importada_em TEXT NOT NULL,
+        total REAL,
+        qtd_itens INTEGER
+      );
+    ''');
   }
 
   Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -109,6 +131,42 @@ class BancoDados {
         );
       ''');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_lojas_local ON lojas(local_id);');
+    }
+    if (oldV < 4) {
+      // v4: funde duplicatas por EAN e cria os índices de produtos.
+      // A de-duplicação precisa rodar ANTES do índice UNIQUE, senão ele falha
+      // em bancos que já acumularam produtos repetidos.
+      await ProdutosDAO.dedupPorEan(db);
+      await ProdutosDAO.criarIndices(db);
+      await _criarTabelaNotas(db);
+    }
+    if (oldV < 5) {
+      // v5: nome popular vs original; vínculo registro→nota; resumo da nota.
+      await _addColuna(db, 'produtos', 'nome_original', 'TEXT');
+      await db.execute(
+        'UPDATE produtos SET nome_original = nome WHERE nome_original IS NULL;',
+      );
+      await _addColuna(db, 'registros', 'nota_chave', 'TEXT');
+      await _addColuna(db, 'notas_importadas', 'total', 'REAL');
+      await _addColuna(db, 'notas_importadas', 'qtd_itens', 'INTEGER');
+    }
+    if (oldV < 6) {
+      // v6: marca itens a granel / sem código de barras (distingue de "pendente").
+      await _addColuna(db, 'produtos', 'sem_codigo', 'INTEGER NOT NULL DEFAULT 0');
+    }
+  }
+
+  /// Adiciona uma coluna apenas se ela ainda não existir (migração idempotente).
+  Future<void> _addColuna(
+    Database db,
+    String tabela,
+    String coluna,
+    String tipo,
+  ) async {
+    final cols = await db.rawQuery("PRAGMA table_info('$tabela')");
+    final existe = cols.any((c) => c['name'] == coluna);
+    if (!existe) {
+      await db.execute('ALTER TABLE $tabela ADD COLUMN $coluna $tipo;');
     }
   }
 }

@@ -1,9 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'banco_dados.dart';
 
+/// DAO de Registros de preço.
+///
+/// O schema (ver [BancoDados]) usa as colunas fixas `preco` (REAL) e `data` (TEXT,
+/// ISO-8601). A coluna `loja_id` foi adicionada na migração v2; `temColunaLojaId`
+/// é mantido como rede de segurança para bancos muito antigos.
 class RegistrosDAO {
-  String? _dataColCache;
-  String? _precoColCache;
   Set<String>? _colunasCache;
 
   Future<Set<String>> _colunas() async {
@@ -19,168 +22,111 @@ class RegistrosDAO {
     return nomes;
   }
 
-  Future<String> _colunaData() async {
-    if (_dataColCache != null) return _dataColCache!;
-    final nomes = await _colunas();
-    if (nomes.contains('data')) {
-      _dataColCache = 'data';
-    } else if (nomes.contains('data_iso')) {
-      _dataColCache = 'data_iso';
-    } else if (nomes.contains('created_at')) {
-      _dataColCache = 'created_at';
-    } else {
-      _dataColCache = 'data';
-    }
-    return _dataColCache!;
-  }
-
-  Future<String> _colunaPreco() async {
-    if (_precoColCache != null) return _precoColCache!;
-    final nomes = await _colunas();
-    if (nomes.contains('preco')) {
-      _precoColCache = 'preco';
-    } else if (nomes.contains('preco_centavos')) {
-      _precoColCache = 'preco_centavos';
-    } else {
-      _precoColCache = 'preco';
-    }
-    return _precoColCache!;
-  }
-
   Future<bool> temColunaLojaId() async => (await _colunas()).contains('loja_id');
-  /// Insere um novo registro de preço
+
+  /// Data/hora atual em ISO-8601 (com hora) — preserva a ordem cronológica
+  /// mesmo com vários registros no mesmo dia.
+  static String agoraIso() => DateTime.now().toIso8601String();
+
+  /// Insere um novo registro de preço (sem loja vinculada).
+  /// [notaChave] vincula o registro à NFC-e de origem (quando veio de nota).
   Future<int> inserir({
     required int produtoId,
     required double preco,
-    required String dataIso, // exemplo: '2025-10-27'
+    String? dataIso,
     String? loja,
-    String? cidade,
+    String? notaChave,
   }) async {
     final db = await BancoDados().banco;
-    final dataCol = await _colunaData();
-    final precoCol = await _colunaPreco();
-    final map = <String, Object?>{
+    final id = await db.insert('registros', {
       'produto_id': produtoId,
-      precoCol: precoCol == 'preco' ? preco : (preco * 100).round(),
-      dataCol: dataIso,
-      'loja': loja, // mantém loja (compat com tabela atual)
-    };
-    final id = await db.insert('registros', map);
-
+      'preco': preco,
+      'data': dataIso ?? agoraIso(),
+      'loja': loja,
+      'nota_chave': notaChave,
+    });
     debugPrint('💾 Registro inserido com id: $id (produto $produtoId)');
     return id;
   }
 
-  /// Busca registros por produto (histórico completo)
-  Future<List<Map<String, dynamic>>> buscarPorProduto(int produtoId) async {
-    final db = await BancoDados().banco;
-    final dataCol = await _colunaData();
-    final possuiLojaId = await temColunaLojaId();
-    List<Map<String, dynamic>> res;
-    if (possuiLojaId) {
-      res = await db.rawQuery(
-        'SELECT r.*, l.nome AS loja_nome '
-        'FROM registros r '
-        'LEFT JOIN lojas l ON r.loja_id = l.id '
-        'WHERE r.produto_id = ? '
-        'ORDER BY r.$dataCol DESC',
-        [produtoId],
-      );
-    } else {
-      res = await db.query(
-        'registros',
-        where: 'produto_id = ?',
-        whereArgs: [produtoId],
-        orderBy: '$dataCol DESC',
-      );
-    }
-    debugPrint(
-      '📜 Encontrados ${res.length} registros para produto $produtoId',
-    );
-    return res;
-  }
-
-  /// Método compatível com versões antigas: retorna últimos registros
-  Future<List<Map<String, dynamic>>> historicoRecentes(
-    int produtoId, {
-    int limite = 10,
-  }) async {
-    final db = await BancoDados().banco;
-    final dataCol = await _colunaData();
-    final possuiLojaId = await temColunaLojaId();
-    List<Map<String, dynamic>> res;
-    if (possuiLojaId) {
-      res = await db.rawQuery(
-        'SELECT r.*, l.nome AS loja_nome '
-        'FROM registros r '
-        'LEFT JOIN lojas l ON r.loja_id = l.id '
-        'WHERE r.produto_id = ? '
-        'ORDER BY r.$dataCol DESC '
-        'LIMIT ?',
-        [produtoId, limite],
-      );
-    } else {
-      res = await db.query(
-        'registros',
-        where: 'produto_id = ?',
-        whereArgs: [produtoId],
-        orderBy: '$dataCol DESC',
-        limit: limite,
-      );
-    }
-    debugPrint('📊 Últimos ${res.length} registros do produto $produtoId');
-    return res;
-  }
-
-  /// Salva o preço de um produto (aceita preco, precoCentavos, loja e cidade)
-  Future<void> salvarPreco({
+  /// Salva o preço de um produto (aceita reais ou centavos; loja em texto).
+  Future<int> salvarPreco({
     required int produtoId,
     double? preco,
     int? precoCentavos,
     String? loja,
     String? cidade,
+    String? dataIso,
+    String? notaChave,
   }) async {
-    final db = await BancoDados().banco;
-
-    // Converte centavos em reais, se for o caso
-    final valor = preco ?? (precoCentavos != null ? precoCentavos / 100 : 0);
-
-    // Data atual (yyyy-MM-dd)
-    final dataIso = DateTime.now().toIso8601String().split('T').first;
-    final dataCol = await _colunaData();
-    final precoCol = await _colunaPreco();
-
-    final map = <String, Object?>{
-      'produto_id': produtoId,
-      precoCol: precoCol == 'preco' ? valor : (valor * 100).round(),
-      dataCol: dataIso,
-      'loja': loja, // mantém loja
-      // 'cidade': cidade,
-    };
-    await db.insert('registros', map);
-
-    debugPrint(
-      '🏪 Preço $valor salvo para produto $produtoId (loja: ${loja ?? "?"}, cidade: ${cidade ?? "?"})',
+    final valor = preco ?? (precoCentavos != null ? precoCentavos / 100 : 0.0);
+    final id = await inserir(
+      produtoId: produtoId,
+      preco: valor.toDouble(),
+      dataIso: dataIso,
+      loja: loja,
+      notaChave: notaChave,
     );
+    debugPrint('🏪 Preço $valor salvo para produto $produtoId (loja: ${loja ?? "?"})');
+    return id;
   }
 
+  /// Insere um registro vinculado a uma loja cadastrada (loja_id).
   Future<int> inserirComLojaId({
     required int produtoId,
     required double preco,
-    required String dataIso,
     required int lojaId,
+    String? dataIso,
+    String? notaChave,
   }) async {
     final db = await BancoDados().banco;
-    final dataCol = await _colunaData();
-    final precoCol = await _colunaPreco();
-    final map = <String, Object?>{
+    final id = await db.insert('registros', {
       'produto_id': produtoId,
-      precoCol: precoCol == 'preco' ? preco : (preco * 100).round(),
-      dataCol: dataIso,
+      'preco': preco,
+      'data': dataIso ?? agoraIso(),
       'loja_id': lojaId,
-    };
-    final id = await db.insert('registros', map);
+      'nota_chave': notaChave,
+    });
     return id;
+  }
+
+  /// Busca registros por produto (histórico completo), com nome da loja.
+  Future<List<Map<String, dynamic>>> buscarPorProduto(int produtoId) async {
+    return _historico(produtoId);
+  }
+
+  /// Retorna os últimos registros do produto.
+  Future<List<Map<String, dynamic>>> historicoRecentes(
+    int produtoId, {
+    int limite = 10,
+  }) async {
+    return _historico(produtoId, limite: limite);
+  }
+
+  Future<List<Map<String, dynamic>>> _historico(int produtoId, {int? limite}) async {
+    final db = await BancoDados().banco;
+    final possuiLojaId = await temColunaLojaId();
+    final limitSql = limite != null ? ' LIMIT $limite' : '';
+
+    final res = possuiLojaId
+        ? await db.rawQuery(
+            'SELECT r.*, l.nome AS loja_nome '
+            'FROM registros r '
+            'LEFT JOIN lojas l ON r.loja_id = l.id '
+            'WHERE r.produto_id = ? '
+            'ORDER BY r.data DESC$limitSql',
+            [produtoId],
+          )
+        : await db.query(
+            'registros',
+            where: 'produto_id = ?',
+            whereArgs: [produtoId],
+            orderBy: 'data DESC',
+            limit: limite,
+          );
+
+    debugPrint('📜 ${res.length} registros para produto $produtoId');
+    return res;
   }
 
   Future<int> excluirPorIds(Iterable<int> ids) async {

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  As NFC-e trazem no QR Code URLs http:// (sem TLS) dos portais estaduais da
+  SEFAZ. O Android bloqueia tráfego cleartext por padrão; aqui liberamos apenas
+  para domínios do governo (*.gov.br), mantendo o resto do app seguro.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">gov.br</domain>
+    </domain-config>
+</network-security-config>

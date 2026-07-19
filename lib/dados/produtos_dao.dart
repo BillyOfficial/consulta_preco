@@ -16,16 +16,24 @@ class ProdutosDAO {
   /// Insere um produto e SEMPRE retorna o id do registro existente/criado.
   /// - Se já existir (por EAN ou nome igual ignorando maiúsculas), retorna o id existente.
   /// - Se não existir, cria e retorna o novo id.
-  Future<int> inserir({String? ean, required String nome}) async {
+  Future<int> inserir({
+    String? ean,
+    required String nome,
+    String? nomeOriginal,
+    bool semCodigo = false,
+  }) async {
     final db = await _db;
     final nomeLimpo = nome.trim();
 
-    // 1) Tenta inserir (ignora conflito)
+    // 1) Tenta inserir (ignora conflito).
+    // nome_original preserva o nome cru (ex.: da NFC-e); por padrão = nome.
     final novoId = await db.insert(
       'produtos',
       {
         'ean': (ean?.trim().isEmpty ?? true) ? null : ean!.trim(),
         'nome': nomeLimpo,
+        'nome_original': (nomeOriginal ?? nome).trim(),
+        'sem_codigo': semCodigo ? 1 : 0,
       },
       conflictAlgorithm: ConflictAlgorithm.ignore,
     );
@@ -204,27 +212,47 @@ class ProdutosDAO {
         .replaceAll('_', r'\_');
   }
 
-  // ========= SUGESTÃO DE ÍNDICES (chame NO onCreate/onUpgrade) =========
+  // ========= ÍNDICES E DE-DUPLICAÇÃO (usados nas migrações) =========
 
-  /// Opcional: helper para criar índices/uniques que ajudam a evitar duplicados
-  /// e aceleram buscas. Chame dentro do onCreate/onUpgrade do seu BancoDados.
+  /// Cria os índices de produtos. Chamado no onCreate/onUpgrade do [BancoDados].
+  /// - EAN é único APENAS quando informado (índice parcial), permitindo vários
+  ///   produtos sem EAN (criados manualmente por nome).
+  /// - Nome ganha índice case-insensitive para acelerar buscas (não-único, pois
+  ///   marcas diferentes podem ter nomes iguais).
   static Future<void> criarIndices(Database db) async {
-    // Índice/constraint para EAN único (se fizer sentido no seu negócio)
-    await db.execute('''
-      CREATE UNIQUE INDEX IF NOT EXISTS ux_produtos_ean
-      ON produtos(ean)
-    ''');
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS ux_produtos_ean '
+      'ON produtos(ean) WHERE ean IS NOT NULL',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_produtos_nome_nocase '
+      'ON produtos(nome COLLATE NOCASE)',
+    );
+  }
 
-    // Índice no nome com NOCASE para evitar duplicado por variação de caixa
+  /// Funde produtos duplicados que tenham o MESMO ean (não nulo), mantendo o
+  /// menor id e re-apontando os registros de preço. Necessário antes de criar
+  /// o índice UNIQUE de EAN em bancos que já acumularam duplicatas.
+  static Future<void> dedupPorEan(Database db) async {
+    // Re-aponta registros dos duplicados para o menor id de cada EAN.
     await db.execute('''
-      CREATE UNIQUE INDEX IF NOT EXISTS ux_produtos_nome_nocase
-      ON produtos(nome COLLATE NOCASE)
+      UPDATE registros
+         SET produto_id = (
+           SELECT MIN(p2.id) FROM produtos p2
+            WHERE p2.ean = (SELECT ean FROM produtos p1 WHERE p1.id = registros.produto_id)
+              AND p2.ean IS NOT NULL
+         )
+       WHERE produto_id IN (
+         SELECT p.id FROM produtos p
+          WHERE p.ean IS NOT NULL
+            AND p.id > (SELECT MIN(p3.id) FROM produtos p3 WHERE p3.ean = p.ean)
+       )
     ''');
-
-    // Índice auxiliar para melhorar buscas por nome
+    // Remove os produtos duplicados (mantém o menor id por EAN).
     await db.execute('''
-      CREATE INDEX IF NOT EXISTS ix_produtos_nome_lower
-      ON produtos(LOWER(nome))
+      DELETE FROM produtos
+       WHERE ean IS NOT NULL
+         AND id > (SELECT MIN(p.id) FROM produtos p WHERE p.ean = produtos.ean)
     ''');
   }
 
@@ -260,4 +288,50 @@ class ProdutosDAO {
     return linhas > 0;
   }
 
+  /// Define o EAN de um produto (usado ao completar uma nota mais tarde).
+  /// Retorna false se o EAN já pertence a outro produto.
+  Future<bool> atualizarEan({required int id, required String ean}) async {
+    final db = await _db;
+    final limpo = ean.trim();
+    if (limpo.isEmpty) return false;
+
+    final outro = await db.query(
+      'produtos',
+      columns: ['id'],
+      where: 'ean = ? AND id <> ?',
+      whereArgs: [limpo, id],
+      limit: 1,
+    );
+    if (outro.isNotEmpty) return false; // EAN já cadastrado em outro produto
+
+    final linhas = await db.update(
+      'produtos',
+      {'ean': limpo, 'sem_codigo': 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    return linhas > 0;
+  }
+
+  /// Marca/desmarca um produto como granel (sem código de barras).
+  Future<void> marcarSemCodigo({required int id, required bool valor}) async {
+    final db = await _db;
+    await db.update(
+      'produtos',
+      {'sem_codigo': valor ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Remove o EAN de um produto (volta a ficar sem código / pendente).
+  Future<void> removerEan(int id) async {
+    final db = await _db;
+    await db.update(
+      'produtos',
+      {'ean': null},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
 }

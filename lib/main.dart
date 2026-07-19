@@ -5,6 +5,8 @@ import 'package:consulta_preco/servicos/loja_selecionada_store.dart';
 import 'package:consulta_preco/telas/pesquisar_produto_tela.dart';
 import 'package:consulta_preco/widgets/selecionar_loja_sheet.dart';
 import 'package:consulta_preco/telas/pesquisar_ean_tela.dart';
+import 'package:consulta_preco/telas/escanear_nota_tela.dart';
+import 'package:consulta_preco/telas/historico_notas_tela.dart';
 
 void main() {
   runApp(const ConsultaPrecoApp());
@@ -124,6 +126,19 @@ class _TelaInicialState extends State<TelaInicial> {
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
+                icon: const Icon(Icons.receipt_long),
+                label: const Text('Ler Nota Fiscal'),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const EscanearNotaTela(),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
                 icon: const Icon(Icons.search),
                 label: const Text('Buscar por Produto'),
                 onPressed: () {
@@ -131,6 +146,19 @@ class _TelaInicialState extends State<TelaInicial> {
                     context,
                     MaterialPageRoute(
                       builder: (_) => const PesquisarProdutoTela(),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.history),
+                label: const Text('Notas Escaneadas'),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const HistoricoNotasTela(),
                     ),
                   );
                 },

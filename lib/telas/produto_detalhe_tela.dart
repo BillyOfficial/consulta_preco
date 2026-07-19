@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:consulta_preco/dados/produtos_dao.dart';
 import 'package:consulta_preco/dados/registros_dao.dart';
 import 'package:consulta_preco/dominio/status_preco.dart';
+import 'package:consulta_preco/dominio/formatadores.dart';
+import 'package:consulta_preco/dominio/ean.dart';
 import 'package:consulta_preco/modelos/loja_model.dart';
 import 'package:consulta_preco/servicos/loja_selecionada_store.dart';
+import 'package:consulta_preco/telas/ler_ean_tela.dart';
 
 class ProdutoDetalheTela extends StatefulWidget {
   final int produtoId;
@@ -68,13 +71,8 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
     // Aceita tanto preco_centavos (int) quanto preco (double)
     final ultimos = historico
         .map((e) {
-          if (e.containsKey('preco_centavos')) {
-            final v = e['preco_centavos'];
-            if (v is int) return v;
-          }
           final pr = e['preco'];
-          if (pr is num) return (pr * 100).round();
-          return null;
+          return pr is num ? (pr * 100).round() : null;
         })
         .whereType<int>()
         .toList();
@@ -121,7 +119,6 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
         await daoRegistros.inserirComLojaId(
           produtoId: widget.produtoId,
           preco: valorCentavos / 100,
-          dataIso: DateTime.now().toIso8601String(),
           lojaId: lojaSelecionada.id!,
         );
       } else {
@@ -285,6 +282,177 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
     super.dispose();
   }
 
+  Widget _buildCabecalhoProduto() {
+    final p = produto!;
+    final nome = (p['nome'] ?? 'Produto').toString();
+    final nomeOriginal = (p['nome_original'] ?? '').toString();
+    final ean = (p['ean'] ?? '').toString();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(nome, style: Theme.of(context).textTheme.titleLarge),
+            ),
+            IconButton(
+              tooltip: 'Renomear',
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: _renomearProduto,
+            ),
+          ],
+        ),
+        if (nomeOriginal.isNotEmpty &&
+            nomeOriginal.toLowerCase() != nome.toLowerCase())
+          Text('Nome na nota: $nomeOriginal',
+              style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            const Icon(Icons.qr_code_2, size: 18, color: Colors.blueGrey),
+            const SizedBox(width: 6),
+            Text(ean.isEmpty ? 'Sem EAN' : 'EAN: $ean'),
+            const Spacer(),
+            TextButton(
+              onPressed: _editarEan,
+              child: Text(ean.isEmpty ? 'Adicionar' : 'Editar'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _renomearProduto() async {
+    final atual = (produto?['nome'] ?? '').toString();
+    final ctrl = TextEditingController(text: atual);
+    final novo = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Renomear produto'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Nome popular',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+              child: const Text('Salvar')),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (novo == null || novo.isEmpty || novo == atual) return;
+    try {
+      await daoProdutos.atualizarNome(id: widget.produtoId, novoNome: novo);
+      await _carregar();
+    } on StateError {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Já existe um produto com esse nome.')),
+      );
+    }
+  }
+
+  Future<void> _editarEan() async {
+    final temEan = (produto?['ean'] ?? '').toString().isNotEmpty;
+    final acao = await showModalBottomSheet<String>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.barcode_reader),
+              title: const Text('Escanear código'),
+              onTap: () => Navigator.pop(context, 'scan'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.keyboard),
+              title: const Text('Digitar código'),
+              onTap: () => Navigator.pop(context, 'digitar'),
+            ),
+            if (temEan)
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('Remover EAN'),
+                onTap: () => Navigator.pop(context, 'remover'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (acao == null || !mounted) return;
+
+    if (acao == 'remover') {
+      await daoProdutos.removerEan(widget.produtoId);
+      await _carregar();
+      return;
+    }
+
+    String? ean;
+    if (acao == 'scan') {
+      ean = await Navigator.push<String>(
+        context,
+        MaterialPageRoute(builder: (_) => const LerEanTela()),
+      );
+    } else {
+      ean = await _pedirEanManual();
+    }
+    if (ean == null || !mounted) return;
+    if (!eanValido(ean)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Código de barras inválido.')),
+      );
+      return;
+    }
+    final ok = await daoProdutos.atualizarEan(id: widget.produtoId, ean: ean);
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Esse EAN já está em outro produto.')),
+      );
+      return;
+    }
+    await _carregar();
+  }
+
+  Future<String?> _pedirEanManual() async {
+    final ctrl = TextEditingController(text: (produto?['ean'] ?? '').toString());
+    final r = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Digitar EAN'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Código de barras',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+              child: const Text('OK')),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    return r;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -294,11 +462,7 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (produto != null)
-              Text(
-                (produto!['nome'] ?? 'Produto').toString(),
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
+            if (produto != null) _buildCabecalhoProduto(),
             const SizedBox(height: 12),
 
             // Campo de preço + etiqueta de status
@@ -381,22 +545,12 @@ class _ProdutoDetalheTelaState extends State<ProdutoDetalheTela> {
                       itemBuilder: (_, i) {
                         final r = historico[i];
 
-                        // preço: aceita 'preco_centavos' (int) ou 'preco' (double/num)
-                        double? precoReais;
-                        if (r.containsKey('preco_centavos')) {
-                          final v = r['preco_centavos'];
-                          if (v is int) precoReais = v / 100.0;
-                        } else if (r.containsKey('preco')) {
-                          final v = r['preco'];
-                          if (v is num) precoReais = v.toDouble();
-                        }
+                        final pv = r['preco'];
+                        final double? precoReais =
+                            pv is num ? pv.toDouble() : null;
 
                         final data =
-                            (r['data'] ??
-                                    r['data_iso'] ??
-                                    r['created_at'] ??
-                                    '')
-                                .toString();
+                            formatarDataIso((r['data'] ?? '').toString());
 
                         final lojaNome = (r['loja_nome'] ?? r['loja'])
                             ?.toString()
