@@ -8,7 +8,7 @@ class BancoDados {
   factory BancoDados() => _instancia;
 
   static const _dbNome = 'consulta_preco.db';
-  static const _dbVersion = 6;
+  static const _dbVersion = 7;
 
   Database? _db;
   Future<Database> get banco async => _db ??= await _abrir();
@@ -153,6 +153,12 @@ class BancoDados {
     if (oldV < 6) {
       // v6: marca itens a granel / sem código de barras (distingue de "pendente").
       await _addColuna(db, 'produtos', 'sem_codigo', 'INTEGER NOT NULL DEFAULT 0');
+    }
+    if (oldV < 7) {
+      // v7: funde produtos duplicados de mesmo nome criados por importações
+      // antigas (antes do get-or-create por nome). Faz notas já importadas
+      // reaproveitarem o EAN/granel que você já havia registrado.
+      await ProdutosDAO.dedupPorNome(db);
     }
   }
 

@@ -293,6 +293,58 @@ class ProdutosDAO {
     ''');
   }
 
+  /// Consolida produtos duplicados de MESMO nome (case-insensitive) que foram
+  /// criados por importações de nota antes do get-or-create por nome.
+  ///
+  /// Para cada nome, elege um produto "canônico" — preferindo o que tem EAN,
+  /// depois o marcado como granel e, por fim, o mais antigo — e funde nele
+  /// APENAS as cópias sem EAN (re-apontando os preços e apagando as cópias).
+  /// Linhas com EAN próprio distinto são preservadas (podem ser produtos
+  /// diferentes com o mesmo nome). Assim, notas já importadas passam a exibir
+  /// o EAN/granel que você já havia registrado, sem reescanear.
+  ///
+  /// O canônico é escolhido pela mesma regra usada em [inserir], então a fusão
+  /// é consistente com o comportamento de novas importações.
+  static Future<void> dedupPorNome(Database db) async {
+    // Expressão que elege o id canônico para um dado nome (LOWER).
+    const canonicoDoNome = '''
+      SELECT p.id FROM produtos p
+       WHERE LOWER(p.nome) = LOWER(d.nome)
+       ORDER BY (p.ean IS NOT NULL AND p.ean <> '') DESC,
+                COALESCE(p.sem_codigo, 0) DESC,
+                p.id ASC
+       LIMIT 1
+    ''';
+
+    // 1) Re-aponta os preços das cópias SEM EAN para o produto canônico.
+    await db.execute('''
+      UPDATE registros
+         SET produto_id = (
+           SELECT ($canonicoDoNome)
+             FROM produtos d WHERE d.id = registros.produto_id
+         )
+       WHERE produto_id IN (
+         SELECT d.id FROM produtos d
+          WHERE (d.ean IS NULL OR d.ean = '')
+            AND d.id <> ($canonicoDoNome)
+       )
+    ''');
+
+    // 2) Apaga as cópias SEM EAN que não são o canônico (os preços já saíram).
+    await db.execute('''
+      DELETE FROM produtos
+       WHERE (ean IS NULL OR ean = '')
+         AND id <> (
+           SELECT p.id FROM produtos p
+            WHERE LOWER(p.nome) = LOWER(produtos.nome)
+            ORDER BY (p.ean IS NOT NULL AND p.ean <> '') DESC,
+                     COALESCE(p.sem_codigo, 0) DESC,
+                     p.id ASC
+            LIMIT 1
+         )
+    ''');
+  }
+
 
   /// Atualiza o nome do produto garantindo que não haja duplicado.
   /// Retorna true se o nome foi alterado com sucesso.
