@@ -1,0 +1,16 @@
+# Modelo do arquivo de assinatura de release.
+#
+# COMO USAR (só na sua máquina — este arquivo real NÃO vai para o Git):
+# 1. Gere a keystore (uma única vez):
+#      keytool -genkey -v -keystore consulta_preco-release.jks \
+#        -keyalg RSA -keysize 2048 -validity 10000 -alias consulta_preco
+# 2. Copie este arquivo para  android/key.properties
+# 3. Preencha os valores abaixo com a senha e o caminho da sua keystore.
+#
+# storeFile: caminho da keystore. Use caminho ABSOLUTO (ex.: /home/voce/chaves/consulta_preco-release.jks)
+#            ou relativo à pasta android/app/ (se colocar o .jks dentro dela, basta o nome do arquivo).
+
+storePassword=SUA_SENHA_DA_KEYSTORE
+keyPassword=SUA_SENHA_DA_CHAVE
+keyAlias=consulta_preco
+storeFile=/caminho/absoluto/para/consulta_preco-release.jks
