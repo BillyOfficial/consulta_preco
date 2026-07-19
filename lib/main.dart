@@ -7,6 +7,7 @@ import 'package:consulta_preco/widgets/selecionar_loja_sheet.dart';
 import 'package:consulta_preco/telas/pesquisar_ean_tela.dart';
 import 'package:consulta_preco/telas/escanear_nota_tela.dart';
 import 'package:consulta_preco/telas/historico_notas_tela.dart';
+import 'package:consulta_preco/telas/backup_tela.dart';
 
 void main() {
   runApp(const ConsultaPrecoApp());
@@ -159,6 +160,19 @@ class _TelaInicialState extends State<TelaInicial> {
                     context,
                     MaterialPageRoute(
                       builder: (_) => const HistoricoNotasTela(),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.import_export),
+                label: const Text('Backup dos Dados'),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const BackupTela(),
                     ),
                   );
                 },

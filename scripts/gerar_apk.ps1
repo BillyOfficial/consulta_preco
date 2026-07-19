@@ -132,6 +132,22 @@ Get-ChildItem $saida -Filter *.apk | ForEach-Object {
   "{0,-38} {1,8:N1} MB" -f $_.Name, ($_.Length / 1MB) | Write-Host
 }
 Write-Host "============================================`n" -ForegroundColor Green
+
+# --- 5) Copia para o OneDrive, organizado por versao --------------------------
+# Le a versao do pubspec.yaml (ex.: "1.1.0+2" -> pasta v1.1.0)
+$linhaVersao = (Select-String -Path (Join-Path $raiz "pubspec.yaml") -Pattern '^version:').Line
+$versao = ($linhaVersao -replace '^version:\s*', '').Split('+')[0].Trim()
+
+if ($env:OneDrive -and $versao) {
+  $pastaVersao = Join-Path $env:OneDrive "Documents\Backup-Keystore-ConsultaPreco\APKs\v$versao"
+  New-Item -ItemType Directory -Force $pastaVersao | Out-Null
+  Get-ChildItem $saida -Filter "app-*release*.apk" | ForEach-Object {
+    $nomeDestino = $_.Name -replace '^app', "consulta_preco_v$versao"
+    Copy-Item $_.FullName (Join-Path $pastaVersao $nomeDestino) -Force
+    Write-Host "Copiado para o OneDrive: APKs\v$versao\$nomeDestino" -ForegroundColor Cyan
+  }
+  Write-Host ""
+}
 if ($SplitPerAbi) {
   Write-Host "Para celular moderno, use o arquivo:  app-arm64-v8a-release.apk" -ForegroundColor Cyan
 }

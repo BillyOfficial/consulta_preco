@@ -13,6 +13,18 @@ class BancoDados {
   Database? _db;
   Future<Database> get banco async => _db ??= await _abrir();
 
+  /// Caminho completo do arquivo .db no aparelho.
+  Future<String> caminhoArquivo() async =>
+      p.join(await getDatabasesPath(), _dbNome);
+
+  /// Fecha o banco para permitir copiar/substituir o arquivo com segurança
+  /// (backup/restauração). O próximo acesso a [banco] reabre normalmente
+  /// e roda as migrações, se o arquivo importado for de versão anterior.
+  Future<void> fechar() async {
+    await _db?.close();
+    _db = null;
+  }
+
   Future<Database> _abrir() async {
     final caminho = await getDatabasesPath();
     final dbPath = p.join(caminho, _dbNome);
