@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:consulta_preco/modelos/loja_model.dart';
 import 'package:consulta_preco/servicos/local_loja_service.dart';
 import 'package:consulta_preco/servicos/loja_selecionada_store.dart';
@@ -34,8 +35,37 @@ class TelaInicial extends StatefulWidget {
 }
 
 class _TelaInicialState extends State<TelaInicial> {
+  static const _canalImportar = MethodChannel('consulta_preco/importar');
+
   final _localLojaService = LocalLojaService();
   bool _processandoLocal = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Backup recebido com o app já aberto ("Abrir com"/"Compartilhar")
+    _canalImportar.setMethodCallHandler((call) async {
+      if (call.method == 'novoArquivo' && call.arguments is String) {
+        _abrirImportacao(call.arguments as String);
+      }
+    });
+    // Backup que abriu o app (app estava fechado)
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final caminho =
+          await _canalImportar.invokeMethod<String>('arquivoPendente');
+      if (caminho != null) _abrirImportacao(caminho);
+    });
+  }
+
+  void _abrirImportacao(String caminho) {
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BackupTela(arquivoInicial: caminho),
+      ),
+    );
+  }
 
   Future<void> _detectarOuSelecionarLoja() async {
     setState(() => _processandoLocal = true);

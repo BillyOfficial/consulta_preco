@@ -1,10 +1,16 @@
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../servicos/backup_service.dart';
 
 /// Tela de exportação/importação do banco de dados entre celulares.
+///
+/// [arquivoInicial] é preenchido quando o app foi aberto por um backup
+/// recebido ("Abrir com"/"Compartilhar") — a confirmação abre direto.
 class BackupTela extends StatefulWidget {
-  const BackupTela({super.key});
+  const BackupTela({super.key, this.arquivoInicial});
+
+  final String? arquivoInicial;
 
   @override
   State<BackupTela> createState() => _BackupTelaState();
@@ -13,6 +19,17 @@ class BackupTela extends StatefulWidget {
 class _BackupTelaState extends State<BackupTela> {
   final _service = BackupService();
   bool _ocupado = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final caminho = widget.arquivoInicial;
+    if (caminho != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _confirmarEImportar(XFile(caminho, name: 'backup recebido'));
+      });
+    }
+  }
 
   Future<void> _exportar() async {
     setState(() => _ocupado = true);
@@ -35,7 +52,10 @@ class _BackupTelaState extends State<BackupTela> {
   Future<void> _importar() async {
     final arquivo = await _service.escolherArquivo();
     if (arquivo == null || !mounted) return;
+    await _confirmarEImportar(arquivo);
+  }
 
+  Future<void> _confirmarEImportar(XFile arquivo) async {
     final confirmou = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
